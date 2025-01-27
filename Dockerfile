@@ -32,7 +32,7 @@ COPY pyproject.toml requirements.txt ./
 COPY app ./app
 
 # Install dependencies
-RUN uv pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Final stage
 FROM python:3.9-slim
