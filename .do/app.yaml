@@ -1,0 +1,13 @@
+name: phonemizer-api
+services:
+- name: web
+  github:
+    branch: main
+    deploy_on_push: true
+    repo: your-username/phonemizer-api
+  dockerfile_path: Dockerfile
+  health_check:
+    http_path: /health
+  http_port: 8000
+  instance_count: 1
+  instance_size_slug: basic-xxs 

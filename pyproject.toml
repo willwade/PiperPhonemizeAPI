@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "phonemizer-api"
+version = "0.1.0"
+description = "API service for text to phoneme conversion"
+authors = ["Your Name <your.email@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+fastapi = "^0.68.0"
+uvicorn = "^0.15.0"
+gruut-ipa = "^0.13.0"
+piper-phonemize = "^1.0.0"
+pydantic = "^1.8.2"
+
+[tool.poetry.dev-dependencies]
+pytest = "^6.2.5"
+httpx = "^0.19.0"
+pytest-asyncio = "^0.15.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api" 
