@@ -5,6 +5,27 @@ from enum import Enum
 import gruut
 from piper_phonemize import phonemize_espeak
 from pathlib import Path
+import os
+from openai import AzureOpenAI, APIError
+from typing import Optional
+import logging
+from dotenv import load_dotenv
+
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure OpenAI
+client = AzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
+    api_version="2023-03-15-preview",
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "")
+)
+ENGINE_NAME = os.getenv("AZURE_OPENAI_ENGINE", "")
 
 
 # Define available languages from gruut's documentation
@@ -37,6 +58,7 @@ app = FastAPI(
     title="Phonemizer API",
     description="""
     Convert text to various phoneme formats including IPA, SAMPA, and eSpeak ASCII.
+    Also supports converting IPA back to text using Azure OpenAI.
     
     Use the /languages endpoint to see all supported languages.
     """,
@@ -69,6 +91,11 @@ async def root():
                 "path": "/languages",
                 "method": "GET",
                 "description": "List supported languages"
+            },
+            "ipa-to-text": {
+                "path": "/ipa-to-text",
+                "method": "POST",
+                "description": "Convert IPA to text"
             }
         }
     }
@@ -141,6 +168,36 @@ class PhonemeResponse(BaseModel):
         }
 
 
+class IPAToTextRequest(BaseModel):
+    ipa: str = Field(
+        ...,
+        description="IPA phonemes to convert to text (with or without slashes)",
+        examples=["kæt", "/kæt/", "həˈloʊ"]
+    )
+
+    @validator('ipa')
+    def clean_ipa(cls, v):
+        """Clean IPA input by removing slashes and extra whitespace."""
+        # Remove leading/trailing slashes and whitespace
+        cleaned = v.strip().strip('/')
+        if not cleaned:
+            raise ValueError('IPA text cannot be empty')
+        return cleaned
+
+
+class IPAToTextResponse(BaseModel):
+    text: str = Field(
+        ...,
+        description="Predicted text from IPA",
+        examples=["cat", "hello"]
+    )
+    confidence: Optional[float] = Field(
+        None,
+        description="Confidence score of the prediction",
+        examples=[0.95]
+    )
+
+
 @app.get("/languages", 
     summary="List supported languages",
     description="Returns a list of all supported language codes and their descriptions")
@@ -183,6 +240,111 @@ async def phonemize_text(request: PhonemeRequest) -> PhonemeResponse:
         )
 
 
+@app.post(
+    "/ipa-to-text",
+    response_model=IPAToTextResponse,
+    summary="Convert IPA to text",
+    description="""
+    Convert IPA phonemes to the most likely English word spelling using Azure OpenAI.
+    
+    Examples:
+    ```json
+    {
+        "ipa": "kæt"
+    }
+    ```
+    or
+    ```json
+    {
+        "ipa": "/kæt/"
+    }
+    ```
+    """
+)
+async def ipa_to_text(request: IPAToTextRequest) -> IPAToTextResponse:
+    """Convert IPA phonemes to text using Azure OpenAI."""
+    try:
+        # Check if Azure OpenAI is configured
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        
+        if not all([endpoint, api_key, ENGINE_NAME]):
+            logger.error(f"Missing configuration: endpoint={bool(endpoint)}, api_key={bool(api_key)}, engine={bool(ENGINE_NAME)}")
+            raise HTTPException(
+                status_code=503,
+                detail="Azure OpenAI not configured. Please set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_OPENAI_ENGINE environment variables."
+            )
+
+        # Create a new client for each request to ensure fresh configuration
+        client = AzureOpenAI(
+            api_key=api_key,
+            api_version="2023-05-15",  # Updated API version
+            azure_endpoint=endpoint
+        )
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant that converts IPA symbols "
+                    "into English words. Output only the spelled-out English "
+                    "word(s), no extra commentary. If multiple words are "
+                    "possible, pick the most common."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"IPA: {request.ipa}",
+            },
+        ]
+
+        try:
+            response = client.chat.completions.create(
+                model=ENGINE_NAME,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=50
+            )
+            
+            predicted_text = response.choices[0].message.content.strip()
+            
+            return IPAToTextResponse(
+                text=predicted_text,
+                confidence=response.choices[0].finish_reason == "stop"
+            )
+        except APIError as e:
+            logger.error(f"Azure OpenAI API error: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Azure OpenAI API error: {str(e)}"
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during API call: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error during API call: {str(e)}"
+            )
+            
+    except Exception as e:
+        logger.error(f"Error in ipa_to_text: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error converting IPA to text: {str(e)}"
+        )
+
+
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"} 
+    return {"status": "healthy"}
+
+
+@app.get("/debug/config")
+async def debug_config():
+    """Debug endpoint to check configuration."""
+    return {
+        "endpoint_set": bool(os.getenv("AZURE_OPENAI_ENDPOINT")),
+        "api_key_set": bool(os.getenv("AZURE_OPENAI_API_KEY")),
+        "engine_set": bool(os.getenv("AZURE_OPENAI_ENGINE")),
+        "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", "").replace(os.getenv("AZURE_OPENAI_API_KEY", ""), "REDACTED"),
+        "engine": os.getenv("AZURE_OPENAI_ENGINE", "")
+    } 
