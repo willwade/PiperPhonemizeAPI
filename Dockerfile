@@ -60,4 +60,9 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
+# Environment variables will be provided by Digital Ocean
+ENV AZURE_OPENAI_ENDPOINT=""
+ENV AZURE_OPENAI_API_KEY=""
+ENV AZURE_OPENAI_ENGINE=""
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
